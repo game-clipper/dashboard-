@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Game Clipper</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #181b22; --line: #272b35; --text: #eef0f4; --muted: #9097a5;
+    --accent: #7c5cff; --good: #2ecc71; --warn: #f5a623; --bad: #ff5c6c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding-bottom: env(safe-area-inset-bottom); }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 16px; }
+  header.top { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0;
+    background: var(--bg); z-index: 5; }
+  header.top a.brand { color: var(--text); text-decoration: none; font-weight: 700; }
+  nav { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  nav a, nav button { color: var(--muted); text-decoration: none; font-size: 14px; background: none;
+    border: 1px solid var(--line); padding: 7px 12px; border-radius: 999px; cursor: pointer; }
+  nav a.on { color: var(--text); border-color: var(--accent); }
+  h1 { font-size: 22px; margin: 8px 0 14px; }
+  h2 { font-size: 17px; margin: 26px 0 10px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 14px; margin-bottom: 10px; }
+  a.card { display: block; color: inherit; text-decoration: none; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .small { font-size: 13px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 5px; }
+  input, select, textarea { width: 100%; background: #0f1218; color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px; font-size: 16px; font-family: inherit; }
+  textarea { min-height: 80px; resize: vertical; }
+  button.btn { background: var(--accent); color: #fff; border: 0; border-radius: 10px; padding: 12px 18px;
+    font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 14px; }
+  button.btn.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+  button.btn.danger { background: transparent; border: 1px solid var(--bad); color: var(--bad); }
+  .badge { display: inline-block; font-size: 12px; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .badge.good { color: var(--good); border-color: var(--good); }
+  .badge.warn { color: var(--warn); border-color: var(--warn); }
+  .badge.bad { color: var(--bad); border-color: var(--bad); }
+  .score { font-weight: 700; }
+  .empty { color: var(--muted); text-align: center; padding: 18px; border: 1px dashed var(--line);
+    border-radius: 14px; font-size: 14px; }
+  .stats { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #222735;
+    border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 20; }
+  .back { color: var(--muted); text-decoration: none; font-size: 14px; display: inline-block; margin-bottom: 4px; }
+  a.link { color: #9d87ff; word-break: break-all; }
+  .login { max-width: 380px; margin: 12vh auto 0; }
+  .err { color: var(--bad); font-size: 14px; margin-top: 10px; min-height: 18px; }
+  details.card summary { cursor: pointer; font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL = "https://ehtnfwnwpdrrzqdllynf.supabase.co";
+const SUPABASE_KEY = "sb_publishable_9hQ2JnADSYLkGbyqNMvEHA_zuQcXKkE";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const app = document.getElementById("app");
+
+/* ---------- helpers ---------- */
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtTime = (s) => {
+  s = Math.max(0, Math.round(Number(s) || 0));
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+};
+const fmtDate = (d) => d ? new Date(d).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+const isUrl = (u) => /^https?:\/\//i.test(u || "");
+function toast(msg) {
+  const t = document.createElement("div");
+  t.className = "toast"; t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2600);
+}
+function badge(text, kind = "") { return `<span class="badge ${kind}">${esc(text)}</span>`; }
+function permBadge(p) {
+  if (p === "granted") return badge("Permission granted", "good");
+  if (p === "not_needed_credit_only") return badge("Credit line only", "warn");
+  return badge("Permission pending", "warn");
+}
+function statusBadge(s) {
+  const map = { done: "good", posted: "good", ready_to_post: "warn", approved_by_me: "warn",
+    download_failed: "bad", failed: "bad" };
+  return badge(String(s || "").replaceAll("_", " "), map[s] || "");
+}
+function defaultCredit(name, url) {
+  return `Clip from ${name}. Watch the full video on their channel: ${url}`;
+}
+
+/* ---------- layout ---------- */
+function shell(inner, active) {
+  app.innerHTML = `
+    <header class="top">
+      <a class="brand" href="#/">Game Clipper</a>
+      <nav>
+        <a href="#/" class="${active === "creators" ? "on" : ""}">Creators</a>
+        <a href="#/settings" class="${active === "settings" ? "on" : ""}">Settings</a>
+        <button id="signout">Sign out</button>
+      </nav>
+    </header>
+    <div class="wrap">${inner}</div>`;
+  document.getElementById("signout").onclick = async () => { await sb.auth.signOut(); route(); };
+}
+
+/* ---------- login ---------- */
+function loginView() {
+  app.innerHTML = `
+    <div class="wrap login">
+      <h1>Game Clipper</h1>
+      <p class="muted">Sign in to open your dashboard.</p>
+      <label>Email</label>
+      <input id="em" type="email" autocomplete="username" autocapitalize="none">
+      <label>Password</label>
+      <input id="pw" type="password" autocomplete="current-password">
+      <button class="btn" id="go" style="width:100%">Sign in</button>
+      <div class="err" id="err"></div>
+    </div>`;
+  const go = async () => {
+    const email = document.getElementById("em").value.trim();
+    const password = document.getElementById("pw").value;
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) document.getElementById("err").textContent = error.message;
+    else route();
+  };
+  document.getElementById("go").onclick = go;
+  document.getElementById("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+}
+
+/* ---------- creators list ---------- */
+async function creatorsView() {
+  shell(`<p class="muted">Loading...</p>`, "creators");
+  const [c, k] = await Promise.all([
+    sb.from("creators").select("*").order("created_at", { ascending: false }),
+    sb.from("clips").select("creator_id,status"),
+  ]);
+  if (c.error) return shell(`<div class="empty">Could not load creators: ${esc(c.error.message)}</div>`, "creators");
+  const counts = {};
+  (k.data || []).forEach((x) => {
+    counts[x.creator_id] = counts[x.creator_id] || { approved: 0, ready: 0, posted: 0 };
+    if (["approved", "in_edit", "edit_check"].includes(x.status)) counts[x.creator_id].approved++;
+    if (x.status === "ready_to_post") counts[x.creator_id].ready++;
+    if (x.status === "posted") counts[x.creator_id].posted++;
+  });
+
+  const list = (c.data || []).map((cr) => {
+    const n = counts[cr.id] || { approved: 0, ready: 0, posted: 0 };
+    return `<a class="card" href="#/creator/${cr.id}">
+      <div class="row"><strong>${esc(cr.name)}</strong>${permBadge(cr.permission_status)}</div>
+      <div class="muted small">${esc(cr.channel_url)}</div>
+      <div class="stats">${badge(n.approved + " approved")}${badge(n.ready + " ready")}${badge(n.posted + " posted")}</div>
+    </a>`;
+  }).join("") || `<div class="empty">No creators yet. Add your first one below.</div>`;
+
+  shell(`
+    <h1>Creators</h1>
+    ${list}
+    <h2>Add a creator</h2>
+    <div class="card">
+      <label>Creator name</label>
+      <input id="n" placeholder="e.g. MrBeast Gaming">
+      <label>YouTube channel link</label>
+      <input id="u" placeholder="https://www.youtube.com/@channel" autocapitalize="none">
+      <label>Permission</label>
+      <select id="p">
+        <option value="pending">Pending (asked, no reply yet)</option>
+        <option value="granted">Granted</option>
+        <option value="not_needed_credit_only">Credit line only</option>
+      </select>
+      <label>Permission note (optional)</label>
+      <input id="pn" placeholder="e.g. Agreed on WhatsApp on 14 Nov">
+      <button class="btn" id="add">Add creator</button>
+    </div>`, "creators");
+
+  document.getElementById("add").onclick = async () => {
+    const name = document.getElementById("n").value.trim();
+    const url = document.getElementById("u").value.trim();
+    if (!name || !isUrl(url)) return toast("Enter a name and a full channel link (https://...)");
+    const { error } = await sb.from("creators").insert({
+      name, channel_url: url,
+      permission_status: document.getElementById("p").value,
+      permission_note: document.getElementById("pn").value.trim() || null,
+      credit_line: defaultCredit(name, url),
+    });
+    if (error) return toast(error.message.includes("duplicate") ? "This channel is already added" : error.message);
+    toast("Creator added");
+    creatorsView();
+  };
+}
+
+/* ---------- creator page ---------- */
+async function creatorView(id) {
+  shell(`<p class="muted">Loading...</p>`, "creators");
+  const [c, v, k, p] = await Promise.all([
+    sb.from("creators").select("*").eq("id", id).single(),
+    sb.from("source_videos").select("*").eq("creator_id", id).order("created_at", { ascending: false }),
+    sb.from("clips").select("*").eq("creator_id", id).order("created_at", { ascending: false }),
+    sb.from("posts").select("*").eq("creator_id", id).order("created_at", { ascending: false }),
+  ]);
+  if (c.error || !c.data) return shell(`<a class="back" href="#/">&larr; All creators</a><div class="empty">Creator not found.</div>`, "creators");
+  const cr = c.data, videos = v.data || [], clips = k.data || [], posts = p.data || [];
+  const titleOf = {};
+  videos.forEach((x) => (titleOf[x.id] = x.title || x.source_url));
+
+  const videosHtml = videos.map((x) => `
+    <div class="card">
+      <div class="row"><strong>${esc(x.title || "Untitled")}</strong>${statusBadge(x.status)}</div>
+      <div class="muted small">${x.kind === "live" ? "Live stream" : "Video"} &middot; ${esc(fmtDate(x.created_at))}</div>
+      <div class="small"><a class="link" href="${esc(x.source_url)}" target="_blank" rel="noopener">${esc(x.source_url)}</a></div>
+      ${x.failure_reason ? `<div class="small" style="color:var(--bad)">${esc(x.failure_reason)}</div>` : ""}
+    </div>`).join("") || `<div class="empty">No videos yet. Add a link below.</div>`;
+
+  const approved = clips.filter((x) => ["approved", "in_edit", "edit_check"].includes(x.status));
+  const waiting = clips.filter((x) => x.status === "cut").length;
+  const approvedHtml = approved.map((x) => `
+    <div class="card">
+      <div class="row"><strong>${fmtTime(x.start_seconds)} - ${fmtTime(x.end_seconds)}</strong>${statusBadge(x.status)}</div>
+      <div class="muted small">From: ${esc(titleOf[x.source_video_id] || "")}</div>
+      ${x.reason ? `<div class="small">${esc(x.reason)}</div>` : ""}
+    </div>`).join("") || `<div class="empty">No approved clips yet.${waiting ? " " + waiting + " waiting for the Virality check." : ""}</div>`;
+
+  const finals = clips.filter((x) => ["ready_to_post", "posted"].includes(x.status));
+  const finalsHtml = finals.map((x) => {
+    const cp = posts.filter((q) => q.clip_id === x.id);
+    const line = (plat, label) => {
+      const q = cp.find((z) => z.platform === plat);
+      if (!q) return `<div class="row small"><span>${label}</span>${badge("not created")}</div>`;
+      return `<div class="row small"><span>${label}</span><span>${statusBadge(q.status)}
+        ${q.post_url ? ` <a class="link" href="${esc(q.post_url)}" target="_blank" rel="noopener">Open</a>` : ""}
+        ${q.views ? ` &middot; ${q.views} views` : ""}</span></div>`;
+    };
+    const title = (cp.find((z) => z.title) || {}).title;
+    return `<div class="card">
+      <div class="row"><strong>${esc(title || "Clip " + fmtTime(x.start_seconds) + " - " + fmtTime(x.end_seconds))}</strong>${statusBadge(x.status)}</div>
+      ${line("youtube", "YouTube")}${line("instagram", "Instagram")}
+    </div>`;
+  }).join("") || `<div class="empty">No final shorts yet.</div>`;
+
+  shell(`
+    <a class="back" href="#/">&larr; All creators</a>
+    <h1>${esc(cr.name)}</h1>
+    <div class="card">
+      <div class="row">${permBadge(cr.permission_status)}<a class="link small" href="${esc(cr.channel_url)}" target="_blank" rel="noopener">Open channel</a></div>
+      <label>Permission</label>
+      <select id="ps">
+        <option value="pending">Pending</option>
+        <option value="granted">Granted</option>
+        <option value="not_needed_credit_only">Credit line only</option>
+      </select>
+      <label>Permission note</label>
+      <input id="pnote" value="${esc(cr.permission_note || "")}">
+      <label>Credit line (goes in every post)</label>
+      <textarea id="cl">${esc(cr.credit_line || "")}</textarea>
+      <button class="btn" id="save">Save</button>
+    </div>
+
+    <h2>Source videos and streams</h2>
+    ${videosHtml}
+    <details class="card"><summary>Add a video or live stream</summary>
+      <label>Link</label>
+      <input id="vu" placeholder="https://www.youtube.com/watch?v=..." autocapitalize="none">
+      <label>Type</label>
+      <select id="vk"><option value="video">Video</option><option value="live">Live stream</option></select>
+      <label>Title (optional)</label>
+      <input id="vt">
+      <button class="btn" id="addv">Add and queue</button>
+    </details>
+
+    <h2>Approved clips</h2>
+    ${approvedHtml}
+
+    <h2>Final shorts</h2>
+    ${finalsHtml}
+
+    <h2>Danger zone</h2>
+    <button class="btn danger" id="del">Delete this creator and all their data</button>
+  `, "creators");
+
+  document.getElementById("ps").value = cr.permission_status;
+  document.getElementById("save").onclick = async () => {
+    const { error } = await sb.from("creators").update({
+      permission_status: document.getElementById("ps").value,
+      permission_note: document.getElementById("pnote").value.trim() || null,
+      credit_line: document.getElementById("cl").value.trim() || null,
+    }).eq("id", id);
+    toast(error ? error.message : "Saved");
+    if (!error) creatorView(id);
+  };
+  document.getElementById("addv").onclick = async () => {
+    const url = document.getElementById("vu").value.trim();
+    if (!isUrl(url)) return toast("Enter a full link (https://...)");
+    const { error } = await sb.from("source_videos").insert({
+      creator_id: id, source_url: url,
+      kind: document.getElementById("vk").value,
+      title: document.getElementById("vt").value.trim() || null,
+      status: "queued",
+    });
+    toast(error ? error.message : "Added. The Video Reader will pick it up.");
+    if (!error) creatorView(id);
+  };
+  document.getElementById("del").onclick = async () => {
+    if (!confirm("Delete " + cr.name + " and all clips, scores and posts? This cannot be undone.")) return;
+    const { error } = await sb.from("creators").delete().eq("id", id);
+    if (error) return toast(error.message);
+    toast("Deleted");
+    location.hash = "#/";
+  };
+}
+
+/* ---------- settings ---------- */
+async function settingsView() {
+  shell(`<p class="muted">Loading...</p>`, "settings");
+  const { data, error } = await sb.from("settings").select("*");
+  if (error) return shell(`<div class="empty">Could not load settings: ${esc(error.message)}</div>`, "settings");
+  const s = {};
+  (data || []).forEach((r) => (s[r.key] = r.value));
+  shell(`
+    <h1>Settings</h1>
+    <div class="card">
+      <label>Delivery email (post links are sent here)</label>
+      <input id="em" type="email" value="${esc(s.delivery_email || "")}" autocapitalize="none">
+      <label>Auto-post</label>
+      <select id="ap">
+        <option value="off">Off (I approve each post)</option>
+        <option value="on">On (post automatically)</option>
+      </select>
+      <p class="muted small">Turn auto-post on only after 10 to 20 good manual posts.</p>
+      <button class="btn" id="save">Save settings</button>
+    </div>`, "settings");
+  document.getElementById("ap").value = s.auto_post === "on" ? "on" : "off";
+  document.getElementById("save").onclick = async () => {
+    const email = document.getElementById("em").value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) return toast("Enter a valid email");
+    const now = new Date().toISOString();
+    const { error } = await sb.from("settings").upsert([
+      { key: "delivery_email", value: email, updated_at: now },
+      { key: "auto_post", value: document.getElementById("ap").value, updated_at: now },
+    ]);
+    toast(error ? error.message : "Saved");
+  };
+}
+
+/* ---------- router ---------- */
+async function route() {
+  const { data } = await sb.auth.getSession();
+  if (!data.session) return loginView();
+  const h = location.hash || "#/";
+  if (h.startsWith("#/creator/")) return creatorView(h.split("/")[2]);
+  if (h === "#/settings") return settingsView();
+  return creatorsView();
+}
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>
