@@ -55,6 +55,13 @@
   .login { max-width: 380px; margin: 12vh auto 0; }
   .err { color: var(--bad); font-size: 14px; margin-top: 10px; min-height: 18px; }
   details.card summary { cursor: pointer; font-weight: 600; }
+  details.rep { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+  details.rep summary { cursor: pointer; color: #9d87ff; font-size: 14px; font-weight: 600; }
+  .mom { border-top: 1px solid var(--line); padding: 8px 0; font-size: 14px; }
+  .mom:first-child { border-top: 0; }
+  .tr { max-height: 260px; overflow: auto; font-size: 13px; color: var(--muted); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px; margin-top: 6px; }
+  .tr p { margin: 0 0 6px; }
 </style>
 </head>
 <body>
@@ -92,6 +99,30 @@ function statusBadge(s) {
   const map = { done: "good", posted: "good", ready_to_post: "warn", approved_by_me: "warn",
     download_failed: "bad", failed: "bad" };
   return badge(String(s || "").replaceAll("_", " "), map[s] || "");
+}
+
+function fmtLong(s) {
+  s = Math.max(0, Math.round(Number(s) || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(sec).padStart(2, "0");
+}
+function reportHtml(r) {
+  if (!r) return "";
+  const moms = (r.loud_moments || []).map((m) => `
+    <div class="mom"><strong>${fmtLong(m.time)}</strong>
+      <span class="muted small"> &middot; +${esc(m.spike_db)} dB louder than around it</span>
+      <div class="small">${m.transcript ? esc(m.transcript) : '<span class="muted">(no speech text here)</span>'}</div>
+    </div>`).join("") || `<div class="muted small">No loud moments found.</div>`;
+  const tr = (r.transcript || []).slice(0, 400).map((t) =>
+    `<p><strong>${fmtLong(t.start)}</strong> ${esc(t.text)}</p>`).join("");
+  const trNote = (r.transcript || []).length > 400 ? `<p>... first 400 lines shown</p>` : "";
+  return `<details class="rep"><summary>View report</summary>
+    <div class="muted small" style="margin:8px 0">Length ${fmtLong(r.duration_seconds)} &middot; speech text from ${esc(r.transcript_source)}
+      ${r.language ? " (" + esc(r.language) + ")" : ""} &middot; ${(r.loud_moments || []).length} loud moments</div>
+    <div><strong class="small">Loud moments</strong>${moms}</div>
+    <div style="margin-top:10px"><strong class="small">Full speech text</strong>
+      <div class="tr">${tr || "<p>No speech text for this video.</p>"}${trNote}</div></div>
+  </details>`;
 }
 function defaultCredit(name, url) {
   return `Clip from ${name}. Watch the full video on their channel: ${url}`;
@@ -213,10 +244,11 @@ async function creatorView(id) {
 
   const videosHtml = videos.map((x) => `
     <div class="card">
-      <div class="row"><strong>${esc(x.title || "Untitled")}</strong>${statusBadge(x.status)}</div>
+      <div class="row"><strong>${esc(x.title || "Untitled video")}</strong>${statusBadge(x.status)}</div>
       <div class="muted small">${x.kind === "live" ? "Live stream" : "Video"} &middot; ${esc(fmtDate(x.created_at))}</div>
       <div class="small"><a class="link" href="${esc(x.source_url)}" target="_blank" rel="noopener">${esc(x.source_url)}</a></div>
       ${x.failure_reason ? `<div class="small" style="color:var(--bad)">${esc(x.failure_reason)}</div>` : ""}
+      ${reportHtml(x.report)}
     </div>`).join("") || `<div class="empty">No videos yet. Add a link below.</div>`;
 
   const approved = clips.filter((x) => ["approved", "in_edit", "edit_check"].includes(x.status));
