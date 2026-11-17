@@ -121,10 +121,28 @@ function reportHtml(r, id) {
   const tr = (r.transcript || []).slice(0, 400).map((t) =>
     `<p><strong>${fmtLong(t.start)}</strong> ${esc(t.text)}</p>`).join("");
   const trNote = (r.transcript || []).length > 400 ? `<p>... first 400 lines shown</p>` : "";
+  const mg = r.manager;
+  let mgHtml = "";
+  if (mg && mg.error) {
+    mgHtml = `<div class="small" style="color:var(--bad);margin-bottom:8px">Manager problem: ${esc(mg.error)}</div>`;
+  } else if (mg) {
+    const kept = (mg.picks || []).filter((p) => p.keep);
+    const skipped = (mg.picks || []).filter((p) => !p.keep);
+    const row = (p) => `<div class="mom"><strong>${fmtLong(p.start)} &ndash; ${fmtLong(p.end)}</strong>
+      <span class="badge">${esc(p.score)}/10</span> <span class="muted small">${esc(p.kind)}</span>
+      ${p.title ? `<div><strong>${esc(p.title)}</strong></div>` : ""}
+      <div class="muted small">${esc(p.reason)}</div></div>`;
+    mgHtml = `<div style="margin-bottom:12px"><strong class="small">Manager picks (${kept.length} to clip)</strong>
+      ${kept.map(row).join("") || `<div class="muted small">The Manager found nothing worth clipping.</div>`}
+      ${skipped.length ? `<details style="margin-top:6px"><summary class="muted small">${skipped.length} skipped</summary>${skipped.map(row).join("")}</details>` : ""}</div>`;
+  } else if (r.loud_moments && r.loud_moments.length) {
+    mgHtml = `<div class="muted small" style="margin-bottom:8px">Manager has not judged this video yet.</div>`;
+  }
   return `<details class="rep" data-vid="${esc(id)}"><summary>View report</summary>
     <div class="muted small" style="margin:8px 0">Length ${fmtLong(r.duration_seconds)} &middot; speech text from ${esc(r.transcript_source)}
       ${r.language ? " (" + esc(r.language) + ")" : ""} &middot; ${(r.loud_moments || []).length} loud moments</div>
     ${r.transcript_error ? `<div class="small" style="color:var(--bad);margin-bottom:8px">Speech step problem: ${esc(r.transcript_error)}</div>` : ""}
+    ${mgHtml}
     <div><strong class="small">Loud moments</strong>${moms}</div>
     <div style="margin-top:10px"><strong class="small">Full speech text</strong>
       <div class="tr">${tr || "<p>No speech text for this video.</p>"}${trNote}</div></div>
@@ -266,7 +284,7 @@ async function refreshVideos(creatorId, force) {
   const { data, error } = await sb.from("source_videos").select("*").eq("creator_id", creatorId)
     .order("created_at", { ascending: false });
   if (error || !data) return;
-  const sig = data.map((v) => [v.id, v.status, v.progress, v.title, v.failure_reason].join("~")).join("|");
+  const sig = data.map((v) => [v.id, v.status, v.progress, v.title, v.failure_reason, v.report && v.report.manager ? (v.report.manager.error ? "e" : (v.report.manager.picks || []).length) : "-"].join("~")).join("|");
   if (!force && sig === lastSig) return;
   lastSig = sig;
   const open = [...box.querySelectorAll("details.rep[open]")].map((d) => d.dataset.vid);
