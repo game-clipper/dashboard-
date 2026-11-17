@@ -55,6 +55,11 @@
   .login { max-width: 380px; margin: 12vh auto 0; }
   .err { color: var(--bad); font-size: 14px; margin-top: 10px; min-height: 18px; }
   details.card summary { cursor: pointer; font-weight: 600; }
+  button.x { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 999px;
+    width: 36px; height: 36px; font-size: 18px; line-height: 1; cursor: pointer; flex: none; }
+  button.x:active, button.x:hover { color: var(--bad); border-color: var(--bad); }
+  .prog { height: 8px; background: #0f1218; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; margin-top: 10px; }
+  .prog .bar { height: 100%; background: var(--accent); transition: width .6s ease; }
   details.rep { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
   details.rep summary { cursor: pointer; color: #9d87ff; font-size: 14px; font-weight: 600; }
   .mom { border-top: 1px solid var(--line); padding: 8px 0; font-size: 14px; }
@@ -106,7 +111,7 @@ function fmtLong(s) {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
   return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(sec).padStart(2, "0");
 }
-function reportHtml(r) {
+function reportHtml(r, id) {
   if (!r) return "";
   const moms = (r.loud_moments || []).map((m) => `
     <div class="mom"><strong>${fmtLong(m.time)}</strong>
@@ -116,9 +121,10 @@ function reportHtml(r) {
   const tr = (r.transcript || []).slice(0, 400).map((t) =>
     `<p><strong>${fmtLong(t.start)}</strong> ${esc(t.text)}</p>`).join("");
   const trNote = (r.transcript || []).length > 400 ? `<p>... first 400 lines shown</p>` : "";
-  return `<details class="rep"><summary>View report</summary>
+  return `<details class="rep" data-vid="${esc(id)}"><summary>View report</summary>
     <div class="muted small" style="margin:8px 0">Length ${fmtLong(r.duration_seconds)} &middot; speech text from ${esc(r.transcript_source)}
       ${r.language ? " (" + esc(r.language) + ")" : ""} &middot; ${(r.loud_moments || []).length} loud moments</div>
+    ${r.transcript_error ? `<div class="small" style="color:var(--bad);margin-bottom:8px">Speech step problem: ${esc(r.transcript_error)}</div>` : ""}
     <div><strong class="small">Loud moments</strong>${moms}</div>
     <div style="margin-top:10px"><strong class="small">Full speech text</strong>
       <div class="tr">${tr || "<p>No speech text for this video.</p>"}${trNote}</div></div>
@@ -228,6 +234,66 @@ async function creatorsView() {
   };
 }
 
+
+/* ---------- video cards, live progress, remove ---------- */
+function videoCard(x) {
+  const active = ["downloading", "reading"].includes(x.status);
+  const pct = Math.max(0, Math.min(100, Number(x.progress) || 0));
+  const progress = active
+    ? `<div class="prog"><div class="bar" style="width:${pct}%"></div></div>
+       <div class="small muted" style="margin-top:4px">${x.status === "downloading" ? "Downloading" : "Reading audio"} ${pct}%</div>`
+    : x.status === "queued" ? `<div class="small muted" style="margin-top:6px">Waiting in line...</div>` : "";
+  return `
+    <div class="card">
+      <div class="row"><strong>${esc(x.title || "Untitled video")}</strong>
+        <span style="display:flex;gap:8px;align-items:center">${statusBadge(x.status)}
+          <button class="x" data-del="${esc(x.id)}" data-status="${esc(x.status)}" aria-label="Remove this video" title="Remove">&times;</button></span></div>
+      <div class="muted small">${x.kind === "live" ? "Live stream" : "Video"} &middot; ${esc(fmtDate(x.created_at))}</div>
+      <div class="small"><a class="link" href="${esc(x.source_url)}" target="_blank" rel="noopener">${esc(x.source_url)}</a></div>
+      ${progress}
+      ${x.failure_reason ? `<div class="small" style="color:var(--bad)">${esc(x.failure_reason)}</div>` : ""}
+      ${reportHtml(x.report, x.id)}
+    </div>`;
+}
+function videosListHtml(videos) {
+  return videos.map(videoCard).join("") || `<div class="empty">No videos yet. Add a link below.</div>`;
+}
+let pollTimer = null, lastSig = "";
+function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+async function refreshVideos(creatorId, force) {
+  const box = document.getElementById("vids");
+  if (!box) return stopPoll();
+  const { data, error } = await sb.from("source_videos").select("*").eq("creator_id", creatorId)
+    .order("created_at", { ascending: false });
+  if (error || !data) return;
+  const sig = data.map((v) => [v.id, v.status, v.progress, v.title, v.failure_reason].join("~")).join("|");
+  if (!force && sig === lastSig) return;
+  lastSig = sig;
+  const open = [...box.querySelectorAll("details.rep[open]")].map((d) => d.dataset.vid);
+  box.innerHTML = videosListHtml(data);
+  box.querySelectorAll("details.rep").forEach((d) => { if (open.includes(d.dataset.vid)) d.open = true; });
+}
+function startPoll(creatorId) {
+  stopPoll(); lastSig = "";
+  const box = document.getElementById("vids");
+  if (!box) return;
+  box.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-del]");
+    if (!btn) return;
+    const working = ["queued", "downloading", "reading"].includes(btn.dataset.status);
+    const msg = working
+      ? "Cancel and remove this video? Any download in progress will stop."
+      : "Remove this video and its report? Clips made from it will be removed too.";
+    if (!confirm(msg)) return;
+    btn.disabled = true;
+    const { error } = await sb.from("source_videos").delete().eq("id", btn.dataset.del);
+    if (error) { btn.disabled = false; return toast(error.message); }
+    toast(working ? "Cancelled and removed" : "Removed");
+    refreshVideos(creatorId, true);
+  });
+  pollTimer = setInterval(() => refreshVideos(creatorId, false), 4000);
+}
+
 /* ---------- creator page ---------- */
 async function creatorView(id) {
   shell(`<p class="muted">Loading...</p>`, "creators");
@@ -242,14 +308,7 @@ async function creatorView(id) {
   const titleOf = {};
   videos.forEach((x) => (titleOf[x.id] = x.title || x.source_url));
 
-  const videosHtml = videos.map((x) => `
-    <div class="card">
-      <div class="row"><strong>${esc(x.title || "Untitled video")}</strong>${statusBadge(x.status)}</div>
-      <div class="muted small">${x.kind === "live" ? "Live stream" : "Video"} &middot; ${esc(fmtDate(x.created_at))}</div>
-      <div class="small"><a class="link" href="${esc(x.source_url)}" target="_blank" rel="noopener">${esc(x.source_url)}</a></div>
-      ${x.failure_reason ? `<div class="small" style="color:var(--bad)">${esc(x.failure_reason)}</div>` : ""}
-      ${reportHtml(x.report)}
-    </div>`).join("") || `<div class="empty">No videos yet. Add a link below.</div>`;
+  const videosHtml = videosListHtml(videos);
 
   const approved = clips.filter((x) => ["approved", "in_edit", "edit_check"].includes(x.status));
   const waiting = clips.filter((x) => x.status === "cut").length;
@@ -296,7 +355,7 @@ async function creatorView(id) {
     </div>
 
     <h2>Source videos and streams</h2>
-    ${videosHtml}
+    <div id="vids">${videosHtml}</div>
     <details class="card"><summary>Add a video or live stream</summary>
       <label>Link</label>
       <input id="vu" placeholder="https://www.youtube.com/watch?v=..." autocapitalize="none">
@@ -318,6 +377,7 @@ async function creatorView(id) {
   `, "creators");
 
   document.getElementById("ps").value = cr.permission_status;
+  startPoll(id);
   document.getElementById("save").onclick = async () => {
     const { error } = await sb.from("creators").update({
       permission_status: document.getElementById("ps").value,
@@ -383,6 +443,7 @@ async function settingsView() {
 
 /* ---------- router ---------- */
 async function route() {
+  stopPoll();
   const { data } = await sb.auth.getSession();
   if (!data.session) return loginView();
   const h = location.hash || "#/";
