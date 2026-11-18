@@ -143,6 +143,7 @@ function reportHtml(r, id) {
   return `<details class="rep" data-vid="${esc(id)}"><summary>View report</summary>
     <div class="muted small" style="margin:8px 0">Length ${fmtLong(r.duration_seconds)} &middot; speech text from ${esc(r.transcript_source)}
       ${r.language ? " (" + esc(r.language) + ")" : ""} &middot; ${(r.loud_moments || []).length} loud moments</div>
+    ${r.audio_note ? `<div class="muted small" style="margin-bottom:6px">${esc(r.audio_note)}</div>` : ""}
     ${r.audio_error ? `<div class="small" style="color:var(--bad);margin-bottom:8px">Audio listening problem: ${esc(r.audio_error)}</div>` : ""}
     ${r.transcript_error ? `<div class="small" style="color:var(--bad);margin-bottom:8px">Speech step problem: ${esc(r.transcript_error)}</div>` : ""}
     ${mgHtml}
