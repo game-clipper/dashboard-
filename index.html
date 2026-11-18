@@ -116,6 +116,7 @@ function reportHtml(r, id) {
   const moms = (r.loud_moments || []).map((m) => `
     <div class="mom"><strong>${fmtLong(m.time)}</strong>
       <span class="muted small"> &middot; +${esc(m.spike_db)} dB louder than around it</span>
+      ${m.audio ? `<div class="small" style="color:#9d87ff">Heard: ${esc(m.audio.heard)} <span class="muted">&middot; energy ${esc(m.audio.energy)}/10${m.audio.real_moment ? " &middot; real moment" : ""}</span></div>` : ""}
       <div class="small">${m.transcript ? esc(m.transcript) : '<span class="muted">(no speech text here)</span>'}</div>
     </div>`).join("") || `<div class="muted small">No loud moments found.</div>`;
   const tr = (r.transcript || []).slice(0, 400).map((t) =>
@@ -131,7 +132,8 @@ function reportHtml(r, id) {
     const row = (p) => `<div class="mom"><strong>${fmtLong(p.start)} &ndash; ${fmtLong(p.end)}</strong>
       <span class="badge">${esc(p.score)}/10</span> <span class="muted small">${esc(p.kind)}</span>
       ${p.title ? `<div><strong>${esc(p.title)}</strong></div>` : ""}
-      <div class="muted small">${esc(p.reason)}</div></div>`;
+      <div class="muted small">${esc(p.reason)}</div>
+      ${p.evidence ? `<div class="small" style="margin-top:4px">&ldquo;${esc(p.evidence)}&rdquo;</div>` : ""}</div>`;
     mgHtml = `<div style="margin-bottom:12px"><strong class="small">Manager picks (${kept.length} to clip)</strong>
       ${kept.map(row).join("") || `<div class="muted small">The Manager found nothing worth clipping.</div>`}
       ${skipped.length ? `<details style="margin-top:6px"><summary class="muted small">${skipped.length} skipped</summary>${skipped.map(row).join("")}</details>` : ""}</div>`;
@@ -141,6 +143,7 @@ function reportHtml(r, id) {
   return `<details class="rep" data-vid="${esc(id)}"><summary>View report</summary>
     <div class="muted small" style="margin:8px 0">Length ${fmtLong(r.duration_seconds)} &middot; speech text from ${esc(r.transcript_source)}
       ${r.language ? " (" + esc(r.language) + ")" : ""} &middot; ${(r.loud_moments || []).length} loud moments</div>
+    ${r.audio_error ? `<div class="small" style="color:var(--bad);margin-bottom:8px">Audio listening problem: ${esc(r.audio_error)}</div>` : ""}
     ${r.transcript_error ? `<div class="small" style="color:var(--bad);margin-bottom:8px">Speech step problem: ${esc(r.transcript_error)}</div>` : ""}
     ${mgHtml}
     <div><strong class="small">Loud moments</strong>${moms}</div>
