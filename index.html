@@ -67,6 +67,14 @@
   .tr { max-height: 260px; overflow: auto; font-size: 13px; color: var(--muted); border: 1px solid var(--line);
     border-radius: 10px; padding: 10px; margin-top: 6px; }
   .tr p { margin: 0 0 6px; }
+  button.mini { background: transparent; border: 1px solid var(--line); color: var(--text); border-radius: 999px;
+    padding: 6px 12px; font-size: 13px; cursor: pointer; margin: 8px 6px 0 0; font-family: inherit; }
+  button.mini.good { border-color: var(--good); color: var(--good); }
+  button.mini.bad { border-color: var(--bad); color: var(--bad); }
+  button.mini:disabled { opacity: .5; cursor: default; }
+  .ex img { max-width: 100%; max-height: 160px; border-radius: 10px; margin-top: 8px; display: block; }
+  .pb { white-space: pre-wrap; font-size: 14px; }
+  input[type=file] { padding: 10px; }
 </style>
 </head>
 <body>
@@ -111,6 +119,12 @@ function fmtLong(s) {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
   return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(sec).padStart(2, "0");
 }
+function fbButtons(p) {
+  const d = esc(JSON.stringify({ keep: !!p.keep, kind: p.kind, score: p.score, title: p.title, evidence: p.evidence, reason: p.reason }));
+  return p.keep
+    ? `<button class="mini good" data-fb="like" data-pick="${d}">Good pick</button><button class="mini bad" data-fb="dislike" data-pick="${d}">Bad pick</button>`
+    : `<button class="mini good" data-fb="like" data-pick="${d}">Missed one: this was good</button>`;
+}
 function reportHtml(r, id) {
   if (!r) return "";
   const moms = (r.loud_moments || []).map((m) => `
@@ -133,8 +147,10 @@ function reportHtml(r, id) {
       <span class="badge">${esc(p.score)}/10</span> <span class="muted small">${esc(p.kind)}</span>
       ${p.title ? `<div><strong>${esc(p.title)}</strong></div>` : ""}
       <div class="muted small">${esc(p.reason)}</div>
-      ${p.evidence ? `<div class="small" style="margin-top:4px">&ldquo;${esc(p.evidence)}&rdquo;</div>` : ""}</div>`;
-    mgHtml = `<div style="margin-bottom:12px"><strong class="small">Manager picks (${kept.length} to clip)</strong>
+      ${p.evidence ? `<div class="small" style="margin-top:4px">&ldquo;${esc(p.evidence)}&rdquo;</div>` : ""}
+      ${fbButtons(p)}</div>`;
+    mgHtml = `<div style="margin-bottom:12px"><strong class="small">Manager picks (${kept.length} to clip)</strong>${mg.taste ? ` <span class="muted small">&middot; using ${esc(mg.taste)} of your examples</span>` : ""}
+      <button class="mini" data-rejudge="${esc(id)}">Re-judge with latest taste</button>
       ${kept.map(row).join("") || `<div class="muted small">The Manager found nothing worth clipping.</div>`}
       ${skipped.length ? `<details style="margin-top:6px"><summary class="muted small">${skipped.length} skipped</summary>${skipped.map(row).join("")}</details>` : ""}</div>`;
   } else if (r.loud_moments && r.loud_moments.length) {
@@ -163,6 +179,7 @@ function shell(inner, active) {
       <a class="brand" href="#/">Game Clipper</a>
       <nav>
         <a href="#/" class="${active === "creators" ? "on" : ""}">Creators</a>
+        <a href="#/teach" class="${active === "teach" ? "on" : ""}">Teach</a>
         <a href="#/settings" class="${active === "settings" ? "on" : ""}">Settings</a>
         <button id="signout">Sign out</button>
       </nav>
@@ -198,10 +215,13 @@ function loginView() {
 /* ---------- creators list ---------- */
 async function creatorsView() {
   shell(`<p class="muted">Loading...</p>`, "creators");
-  const [c, k] = await Promise.all([
+  const [c, k, vv] = await Promise.all([
     sb.from("creators").select("*").order("created_at", { ascending: false }),
     sb.from("clips").select("creator_id,status"),
+    sb.from("source_videos").select("creator_id"),
   ]);
+  const vcount = {};
+  (vv.data || []).forEach((x) => { vcount[x.creator_id] = (vcount[x.creator_id] || 0) + 1; });
   if (c.error) return shell(`<div class="empty">Could not load creators: ${esc(c.error.message)}</div>`, "creators");
   const counts = {};
   (k.data || []).forEach((x) => {
@@ -213,11 +233,14 @@ async function creatorsView() {
 
   const list = (c.data || []).map((cr) => {
     const n = counts[cr.id] || { approved: 0, ready: 0, posted: 0 };
-    return `<a class="card" href="#/creator/${cr.id}">
-      <div class="row"><strong>${esc(cr.name)}</strong>${permBadge(cr.permission_status)}</div>
-      <div class="muted small">${esc(cr.channel_url)}</div>
-      <div class="stats">${badge(n.approved + " approved")}${badge(n.ready + " ready")}${badge(n.posted + " posted")}</div>
-    </a>`;
+    return `<div class="card cr"><div class="row" style="flex-wrap:nowrap;align-items:flex-start">
+      <a href="#/creator/${esc(cr.id)}" style="flex:1;min-width:0;color:inherit;text-decoration:none">
+        <div class="row"><strong>${esc(cr.name)}</strong>${permBadge(cr.permission_status)}</div>
+        <div class="muted small" style="word-break:break-all">${esc(cr.channel_url)}</div>
+        <div class="stats">${badge(n.approved + " approved")}${badge(n.ready + " ready")}${badge(n.posted + " posted")}</div>
+      </a>
+      <button class="x" data-crdel="${esc(cr.id)}" data-name="${esc(cr.name)}" data-videos="${vcount[cr.id] || 0}" aria-label="Remove creator">&times;</button>
+    </div></div>`;
   }).join("") || `<div class="empty">No creators yet. Add your first one below.</div>`;
 
   shell(`
@@ -239,6 +262,22 @@ async function creatorsView() {
       <input id="pn" placeholder="e.g. Agreed on WhatsApp on 14 Nov">
       <button class="btn" id="add">Add creator</button>
     </div>`, "creators");
+
+  document.querySelector(".wrap").addEventListener("click", async (e) => {
+    const b = e.target.closest("button[data-crdel]");
+    if (!b) return;
+    const n = Number(b.dataset.videos) || 0;
+    const msg = `Remove ${b.dataset.name}?\n\nThis also removes ${n ? n + " video" + (n === 1 ? "" : "s") + ", " : ""}their reports and any clips. Downloads in progress will stop.`;
+    if (!confirm(msg)) return;
+    b.disabled = true;
+    const id = b.dataset.crdel;
+    for (const table of ["posts", "clips", "source_videos", "creators"]) {  // children first, so nothing blocks the delete
+      const { error } = await sb.from(table).delete().eq(table === "creators" ? "id" : "creator_id", id);
+      if (error) { b.disabled = false; return toast(error.message); }
+    }
+    toast("Removed " + b.dataset.name);
+    creatorsView();
+  });
 
   document.getElementById("add").onclick = async () => {
     const name = document.getElementById("n").value.trim();
@@ -300,6 +339,31 @@ function startPoll(creatorId) {
   const box = document.getElementById("vids");
   if (!box) return;
   box.addEventListener("click", async (e) => {
+    const fb = e.target.closest("button[data-fb]");
+    if (fb) {
+      let p; try { p = JSON.parse(fb.dataset.pick); } catch { return; }
+      const like = fb.dataset.fb === "like";
+      fb.disabled = true;
+      const verdictText = like ? (p.keep ? "good pick" : "this was a good moment and should have been picked") : "bad pick, nothing special";
+      const note = `Manager ${p.keep ? "picked" : "skipped"} a ${p.kind} moment (${p.score}/10). Title: ${p.title || "-"}. Evidence: "${p.evidence || ""}". Manager reason: ${p.reason || ""}. Owner says: ${verdictText}.`;
+      const { error } = await sb.from("examples").insert({
+        kind: "pick", verdict: like ? "like" : "dislike", title: p.title || "", note, status: "learned", analysis: { summary: note },
+      });
+      if (error) { fb.disabled = false; return toast(error.message); }
+      fb.textContent = "Saved";
+      return toast("Saved. The Manager will learn from this.");
+    }
+    const rj = e.target.closest("button[data-rejudge]");
+    if (rj) {
+      rj.disabled = true;
+      const { data: row, error: e1 } = await sb.from("source_videos").select("report").eq("id", rj.dataset.rejudge).single();
+      if (e1 || !row || !row.report) { rj.disabled = false; return toast(e1 ? e1.message : "Nothing to re-judge"); }
+      const r = { ...row.report }; delete r.manager;
+      const { error } = await sb.from("source_videos").update({ report: r }).eq("id", rj.dataset.rejudge);
+      if (error) { rj.disabled = false; return toast(error.message); }
+      toast("Re-judging. Check back in a minute or two.");
+      return refreshVideos(creatorId, true);
+    }
     const btn = e.target.closest("button[data-del]");
     if (!btn) return;
     const working = ["queued", "downloading", "reading"].includes(btn.dataset.status);
@@ -431,6 +495,130 @@ async function creatorView(id) {
 }
 
 /* ---------- settings ---------- */
+/* ---------- teach the manager ---------- */
+const TEACH_KINDS = [
+  { v: "clip_like", kind: "clip", verdict: "like", label: "A viral clip I want more of" },
+  { v: "clip_dislike", kind: "clip", verdict: "dislike", label: "A clip I do NOT want" },
+  { v: "thumb_like", kind: "thumbnail", verdict: "like", label: "A thumbnail I like" },
+  { v: "thumb_dislike", kind: "thumbnail", verdict: "dislike", label: "A thumbnail I do NOT like" },
+];
+let teachSig = "";
+function exampleCard(x) {
+  const like = x.verdict === "like";
+  const st = { new: ["waiting", "warn"], learning: ["learning...", "warn"], learned: ["learned", "good"], error: ["problem", "bad"] }[x.status] || [x.status, ""];
+  const kindLabel = { clip: "Clip", thumbnail: "Thumbnail", pick: "Verdict on a pick" }[x.kind] || x.kind;
+  const a = x.analysis || {};
+  const lines = [["Hook", a.hook], ["Action", a.action], ["Sound", a.audio], ["Feeling", a.emotion], ["Editing", a.editing], ["Thumbnail", a.thumbnail], ["Why", a.why]]
+    .filter(([, v]) => v).map(([k, v]) => `<div class="small"><span class="muted">${k}:</span> ${esc(v)}</div>`).join("");
+  const sig = (a.signals || []).length ? `<div class="small" style="margin-top:6px"><span class="muted">Signals:</span> ${a.signals.map(esc).join(" &middot; ")}</div>` : "";
+  const detail = x.kind !== "pick" && x.status === "learned" && (a.summary || lines)
+    ? `<details style="margin-top:8px"><summary class="muted small">What the Manager learned</summary>
+        ${a.summary ? `<div class="small" style="margin-top:6px">${esc(a.summary)}</div>` : ""}${lines}${sig}</details>` : "";
+  const img = x.file_url && (x.file_type || "").startsWith("image/") ? `<img src="${esc(x.file_url)}" alt="" loading="lazy">` : "";
+  const title = x.kind === "pick" ? "" : `<div><strong>${esc(x.title || x.source_url || "Example")}</strong></div>`;
+  const link = isUrl(x.source_url) ? `<div class="small"><a class="link" href="${esc(x.source_url)}" target="_blank" rel="noopener">${esc(x.source_url)}</a></div>` : "";
+  return `<div class="card ex"><div class="row">
+      <div>${badge(like ? "I like this" : "I do NOT want this", like ? "good" : "bad")} ${badge(kindLabel)} ${badge(st[0], st[1])}</div>
+      <button class="x" data-exdel="${esc(x.id)}" data-path="${esc(x.file_path || "")}" aria-label="Remove">&times;</button></div>
+    ${title}${link}${x.note ? `<div class="small" style="margin-top:4px">${esc(x.note)}</div>` : ""}
+    ${img}${x.status === "error" ? `<div class="small" style="color:var(--bad);margin-top:6px">${esc(x.error || "Something went wrong")}</div>` : ""}${detail}</div>`;
+}
+async function refreshTeach(force) {
+  const list = document.getElementById("exlist");
+  if (!list) return stopPoll();
+  const [ex, st] = await Promise.all([
+    sb.from("examples").select("*").order("created_at", { ascending: false }),
+    sb.from("settings").select("*").in("key", ["manager_playbook", "manager_playbook_count"]),
+  ]);
+  if (ex.error || !ex.data) return;
+  const s = {}; let when = "";
+  (st.data || []).forEach((r) => { s[r.key] = r.value; if (r.key === "manager_playbook") when = r.updated_at; });
+  const sig = ex.data.map((x) => [x.id, x.status, x.error].join("~")).join("|") + "#" + (s.manager_playbook || "").length + (s.manager_playbook_count || "");
+  if (!force && sig === teachSig) return;
+  teachSig = sig;
+  const open = [...list.querySelectorAll("details[open]")].map((d) => d.parentElement.querySelector("[data-exdel]")?.dataset.exdel);
+  list.innerHTML = ex.data.map(exampleCard).join("") || `<div class="empty">No examples yet. Add 5 to 10 to start.</div>`;
+  list.querySelectorAll("details").forEach((d) => { if (open.includes(d.parentElement.querySelector("[data-exdel]")?.dataset.exdel)) d.open = true; });
+  const learned = ex.data.filter((x) => x.status === "learned").length;
+  const waiting = ex.data.filter((x) => x.status === "new" || x.status === "learning").length;
+  document.getElementById("pb").innerHTML = s.manager_playbook
+    ? `<div class="card"><div class="muted small">Built from ${esc(s.manager_playbook_count || learned)} examples${when ? " &middot; updated " + esc(fmtDate(when)) : ""}</div>
+         <div class="pb" style="margin-top:8px">${esc(s.manager_playbook)}</div></div>`
+    : `<div class="empty">${learned || waiting ? "Learning from your examples. The playbook appears here in a minute or two." : "Nothing learned yet. Add a few examples below."}</div>`;
+}
+async function teachView() {
+  shell(`
+    <h1>Teach the Manager</h1>
+    <p class="muted">Show it the viral gaming clips and thumbnails you want, and the ones you do not. It studies each one, writes a playbook, and uses it every time it judges a video. Votes on its picks teach it too.</p>
+    <div class="card">
+      <label>What is this?</label>
+      <select id="tk">${TEACH_KINDS.map((k) => `<option value="${k.v}">${k.label}</option>`).join("")}</select>
+      <label>Upload a file (video, audio or image, up to 50 MB)</label>
+      <input id="tf" type="file" accept="video/*,audio/*,image/*">
+      <label>Or paste a link to a short clip (a Kick clip link, up to 4 minutes)</label>
+      <input id="tl" type="url" placeholder="https://kick.com/..." autocapitalize="none">
+      <label>Why? What makes it good or bad? (this helps most)</label>
+      <textarea id="tn" placeholder="e.g. Sudden kill in the first 3 seconds, he screams, fast action. Or: just talking, nothing happens."></textarea>
+      <button class="btn" id="tadd">Add example</button>
+      <div class="muted small" id="tmsg" style="margin-top:8px"></div>
+    </div>
+    <h2>What the Manager has learned</h2><div id="pb"></div>
+    <h2>Your examples</h2><div id="exlist"><p class="muted">Loading...</p></div>`, "teach");
+  document.getElementById("tadd").onclick = async () => {
+    const k = TEACH_KINDS.find((x) => x.v === document.getElementById("tk").value);
+    const file = document.getElementById("tf").files[0];
+    const link = document.getElementById("tl").value.trim();
+    const note = document.getElementById("tn").value.trim();
+    if (!file && !link) return toast("Choose a file or paste a link");
+    if (file && link) return toast("Use a file or a link, not both");
+    if (link && !isUrl(link)) return toast("The link must start with http");
+    if (link && k.kind === "thumbnail") return toast("Thumbnails need an image file. Take a screenshot and upload it.");
+    if (file && file.size > 50 * 1024 * 1024) return toast("That file is over 50 MB. Trim it or paste a link.");
+    const btn = document.getElementById("tadd"), msg = document.getElementById("tmsg");
+    btn.disabled = true;
+    const row = { kind: k.kind, verdict: k.verdict, note, status: "new" };
+    try {
+      if (file) {
+        msg.textContent = "Uploading " + file.name + " ...";
+        const ext = (file.name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 6) || "bin";
+        const path = (crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random().toString(16).slice(2)) + "." + ext;
+        const up = await sb.storage.from("examples").upload(path, file, { contentType: file.type || undefined });
+        if (up.error) throw up.error;
+        const signed = await sb.storage.from("examples").createSignedUrl(path, 60 * 60 * 24 * 7);
+        if (signed.error) throw signed.error;
+        Object.assign(row, { file_path: path, file_url: signed.data.signedUrl, file_type: file.type || "", title: file.name });
+      } else {
+        Object.assign(row, { source_url: link, title: link });
+      }
+      const { error } = await sb.from("examples").insert(row);
+      if (error) throw error;
+      document.getElementById("tf").value = ""; document.getElementById("tl").value = ""; document.getElementById("tn").value = "";
+      msg.textContent = "";
+      toast("Added. The Manager is learning from it.");
+      refreshTeach(true);
+    } catch (err) {
+      msg.textContent = "";
+      toast(err.message || "Could not add it");
+    }
+    btn.disabled = false;
+  };
+  document.getElementById("exlist").addEventListener("click", async (e) => {
+    const b = e.target.closest("button[data-exdel]");
+    if (!b) return;
+    if (!confirm("Remove this example? The Manager will forget it.")) return;
+    b.disabled = true;
+    if (b.dataset.path) await sb.storage.from("examples").remove([b.dataset.path]);
+    const { error } = await sb.from("examples").delete().eq("id", b.dataset.exdel);
+    if (error) { b.disabled = false; return toast(error.message); }
+    toast("Removed");
+    refreshTeach(true);
+  });
+  teachSig = "";
+  await refreshTeach(true);
+  pollTimer = setInterval(() => refreshTeach(false), 4000);
+}
+
+/* ---------- settings ---------- */
 async function settingsView() {
   shell(`<p class="muted">Loading...</p>`, "settings");
   const { data, error } = await sb.from("settings").select("*");
@@ -471,6 +659,7 @@ async function route() {
   const h = location.hash || "#/";
   if (h.startsWith("#/creator/")) return creatorView(h.split("/")[2]);
   if (h === "#/settings") return settingsView();
+  if (h === "#/teach") return teachView();
   return creatorsView();
 }
 window.addEventListener("hashchange", route);
